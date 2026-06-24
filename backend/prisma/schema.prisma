@@ -1,0 +1,915 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum StockTransactionType {
+  PURCHASE_RECEIPT
+  SALE_DELIVERY
+  INTERNAL_RECEIPT
+  INTERNAL_ISSUE
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUSTMENT_POSITIVE
+  ADJUSTMENT_NEGATIVE
+  STOCK_TAKING_ADJUSTMENT
+  PURCHASE_RETURN
+  SALE_RETURN
+}
+
+enum DocumentStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+enum POStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum SOStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_DELIVERED
+  DELIVERED
+  CANCELLED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+}
+
+enum StockTakingStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  CANCEL
+  CONFIRM
+}
+
+// ============================================================
+// AUTH / ADMIN
+// ============================================================
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique @db.VarChar(200)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  fullName     String   @map("full_name") @db.VarChar(200)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  refreshTokens          RefreshToken[]
+  userRoles              UserRole[]
+  auditLogs              AuditLog[]
+  createdPurchaseOrders  PurchaseOrder[]       @relation("POCreatedBy")
+  approvedPurchaseOrders PurchaseOrder[]       @relation("POApprovedBy")
+  createdGRNs            GoodsReceiptNote[]
+  createdSalesOrders     SalesOrder[]
+  createdQuotations      Quotation[]
+  createdInvoices        Invoice[]
+  createdGDNs            GoodsDeliveryNote[]
+  confirmedGDNs          GoodsDeliveryNote[]   @relation("GDNConfirmedBy")
+  createdStockTakings    StockTakingSession[]
+  createdStockReceipts   StockReceipt[]
+  confirmedStockReceipts StockReceipt[]        @relation("ReceiptConfirmedBy")
+  createdStockIssues     StockIssue[]
+  confirmedStockIssues   StockIssue[]          @relation("IssueConfirmedBy")
+  createdTransfers       StockTransfer[]
+  confirmedTransfers     StockTransfer[]       @relation("TransferConfirmedBy")
+  confirmedGRNs          GoodsReceiptNote[]    @relation("GRNConfirmedBy")
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  ipAddress String?   @map("ip_address") @db.VarChar(45)
+  userAgent String?   @map("user_agent") @db.VarChar(500)
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+model Role {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String  @unique @db.VarChar(100)
+  name        String  @db.VarChar(200)
+  module      String  @db.VarChar(50)
+  description String? @db.VarChar(500)
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model SystemConfig {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique @db.VarChar(100)
+  value       String   @db.Text
+  description String?  @db.VarChar(500)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("system_configs")
+}
+
+model AuditLog {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String?     @map("user_id") @db.Uuid
+  action     AuditAction
+  entityType String      @map("entity_type") @db.VarChar(100)
+  entityId   String?     @map("entity_id") @db.VarChar(100)
+  oldValues  Json?       @map("old_values")
+  newValues  Json?       @map("new_values")
+  ipAddress  String?     @map("ip_address") @db.VarChar(45)
+  userAgent  String?     @map("user_agent") @db.VarChar(500)
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// MASTER DATA
+// ============================================================
+
+model ProductCategory {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @db.VarChar(200)
+  parentId    String?   @map("parent_id") @db.Uuid
+  description String?   @db.VarChar(500)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  parent   ProductCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children ProductCategory[] @relation("CategoryHierarchy")
+  products Product[]
+
+  @@map("product_categories")
+}
+
+model UnitOfMeasure {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String  @db.VarChar(100)
+  symbol      String  @db.VarChar(20)
+  description String? @db.VarChar(500)
+  isActive    Boolean @default(true) @map("is_active")
+
+  conversionsFrom  UomConversion[]   @relation("FromUom")
+  conversionsTo    UomConversion[]   @relation("ToUom")
+  productsBase     Product[]         @relation("BaseUom")
+  productsSale     Product[]         @relation("SaleUom")
+  productsPurchase Product[]         @relation("PurchaseUom")
+  poLines          PurchaseOrderLine[]
+  grnLines         GoodsReceiptLine[]
+  quotationLines   QuotationLine[]
+  soLines          SalesOrderLine[]
+  gdnLines         GoodsDeliveryLine[]
+  invoiceLines     InvoiceLine[]
+
+  @@map("units_of_measure")
+}
+
+model UomConversion {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromUomId String  @map("from_uom_id") @db.Uuid
+  toUomId   String  @map("to_uom_id") @db.Uuid
+  factor    Decimal @db.Decimal(18, 6)
+
+  fromUom UnitOfMeasure @relation("FromUom", fields: [fromUomId], references: [id])
+  toUom   UnitOfMeasure @relation("ToUom", fields: [toUomId], references: [id])
+
+  @@unique([fromUomId, toUomId])
+  @@map("uom_conversions")
+}
+
+model Product {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sku           String   @unique @db.VarChar(50)
+  name          String   @db.VarChar(200)
+  categoryId    String?  @map("category_id") @db.Uuid
+  baseUomId     String   @map("base_uom_id") @db.Uuid
+  saleUomId     String?  @map("sale_uom_id") @db.Uuid
+  purchaseUomId String?  @map("purchase_uom_id") @db.Uuid
+  description   String?  @db.Text
+  status        String   @default("active") @db.VarChar(20)
+  minStockQty   Decimal  @default(0) @map("min_stock_qty") @db.Decimal(15, 4)
+  salePrice     Decimal  @default(0) @map("sale_price") @db.Decimal(18, 2)
+  purchasePrice Decimal  @default(0) @map("purchase_price") @db.Decimal(18, 2)
+  taxRate       Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  category    ProductCategory? @relation(fields: [categoryId], references: [id])
+  baseUom     UnitOfMeasure   @relation("BaseUom", fields: [baseUomId], references: [id])
+  saleUom     UnitOfMeasure?  @relation("SaleUom", fields: [saleUomId], references: [id])
+  purchaseUom UnitOfMeasure?  @relation("PurchaseUom", fields: [purchaseUomId], references: [id])
+
+  inventory        Inventory[]
+  stockTransactions StockTransaction[]
+  stockTakingLines  StockTakingLine[]
+  poLines          PurchaseOrderLine[]
+  grnLines         GoodsReceiptLine[]
+  quotationLines   QuotationLine[]
+  soLines          SalesOrderLine[]
+  gdnLines         GoodsDeliveryLine[]
+  invoiceLines     InvoiceLine[]
+  stockReceiptLines StockReceiptLine[]
+  stockIssueLines   StockIssueLine[]
+  stockTransferLines StockTransferLine[]
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+// ============================================================
+// WAREHOUSE & INVENTORY
+// ============================================================
+
+model Warehouse {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(20)
+  name      String   @db.VarChar(200)
+  address   String?  @db.VarChar(500)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  locations           StockLocation[]
+  inventory           Inventory[]
+  stockTransactions   StockTransaction[]
+  stockTakingSessions StockTakingSession[]
+  grnList             GoodsReceiptNote[]
+  salesOrders         SalesOrder[]
+  gdnList             GoodsDeliveryNote[]
+  stockReceipts       StockReceipt[]
+  stockIssues         StockIssue[]
+  transfersFrom       StockTransfer[]      @relation("TransferFrom")
+  transfersTo         StockTransfer[]      @relation("TransferTo")
+
+  @@map("warehouses")
+}
+
+model StockLocation {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  warehouseId String  @map("warehouse_id") @db.Uuid
+  code        String  @db.VarChar(20)
+  name        String  @db.VarChar(100)
+  isActive    Boolean @default(true) @map("is_active")
+
+  warehouse         Warehouse           @relation(fields: [warehouseId], references: [id])
+  inventory         Inventory[]
+  stockTransactions StockTransaction[]
+  stockTakingLines  StockTakingLine[]
+  grnLines          GoodsReceiptLine[]
+  gdnLines          GoodsDeliveryLine[]
+
+  @@unique([warehouseId, code])
+  @@map("stock_locations")
+}
+
+model Inventory {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId   String  @map("product_id") @db.Uuid
+  warehouseId String  @map("warehouse_id") @db.Uuid
+  locationId  String? @map("location_id") @db.Uuid
+  quantity    Decimal @default(0) @db.Decimal(15, 4)
+  reservedQty Decimal @default(0) @map("reserved_qty") @db.Decimal(15, 4)
+  avgCost     Decimal @default(0) @map("avg_cost") @db.Decimal(18, 4)
+
+  product   Product        @relation(fields: [productId], references: [id])
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  location  StockLocation? @relation(fields: [locationId], references: [id])
+
+  @@unique([productId, warehouseId, locationId])
+  @@index([warehouseId])
+  @@map("inventory")
+}
+
+model StockTransaction {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        StockTransactionType
+  productId   String               @map("product_id") @db.Uuid
+  warehouseId String               @map("warehouse_id") @db.Uuid
+  locationId  String?              @map("location_id") @db.Uuid
+  quantity    Decimal              @db.Decimal(15, 4)
+  unitCost    Decimal              @default(0) @map("unit_cost") @db.Decimal(18, 4)
+  refType     String?              @map("ref_type") @db.VarChar(50)
+  refId       String?              @map("ref_id") @db.Uuid
+  refNumber   String?              @map("ref_number") @db.VarChar(50)
+  note        String?              @db.VarChar(500)
+  createdBy   String               @map("created_by") @db.Uuid
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  product   Product        @relation(fields: [productId], references: [id])
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  location  StockLocation? @relation(fields: [locationId], references: [id])
+
+  @@index([productId, warehouseId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("stock_transactions")
+}
+
+model StockReceipt {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptNumber String         @unique @map("receipt_number") @db.VarChar(30)
+  warehouseId   String         @map("warehouse_id") @db.Uuid
+  status        DocumentStatus @default(DRAFT)
+  receiptDate   DateTime       @map("receipt_date") @db.Date
+  notes         String?        @db.VarChar(500)
+  createdBy     String         @map("created_by") @db.Uuid
+  confirmedBy   String?        @map("confirmed_by") @db.Uuid
+  confirmedAt   DateTime?      @map("confirmed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  warehouse Warehouse          @relation(fields: [warehouseId], references: [id])
+  creator   User               @relation(fields: [createdBy], references: [id])
+  confirmer User?              @relation("ReceiptConfirmedBy", fields: [confirmedBy], references: [id])
+  lines     StockReceiptLine[]
+
+  @@map("stock_receipts")
+}
+
+model StockReceiptLine {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptId  String  @map("receipt_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  locationId String? @map("location_id") @db.Uuid
+  quantity   Decimal @db.Decimal(15, 4)
+  unitCost   Decimal @default(0) @map("unit_cost") @db.Decimal(18, 4)
+  note       String? @db.VarChar(500)
+
+  receipt StockReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id])
+
+  @@map("stock_receipt_lines")
+}
+
+model StockIssue {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  issueNumber String         @unique @map("issue_number") @db.VarChar(30)
+  warehouseId String         @map("warehouse_id") @db.Uuid
+  status      DocumentStatus @default(DRAFT)
+  issueDate   DateTime       @map("issue_date") @db.Date
+  notes       String?        @db.VarChar(500)
+  createdBy   String         @map("created_by") @db.Uuid
+  confirmedBy String?        @map("confirmed_by") @db.Uuid
+  confirmedAt DateTime?      @map("confirmed_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  warehouse Warehouse        @relation(fields: [warehouseId], references: [id])
+  creator   User             @relation(fields: [createdBy], references: [id])
+  confirmer User?            @relation("IssueConfirmedBy", fields: [confirmedBy], references: [id])
+  lines     StockIssueLine[]
+
+  @@map("stock_issues")
+}
+
+model StockIssueLine {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  issueId    String  @map("issue_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  locationId String? @map("location_id") @db.Uuid
+  quantity   Decimal @db.Decimal(15, 4)
+  note       String? @db.VarChar(500)
+
+  issue   StockIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id])
+
+  @@map("stock_issue_lines")
+}
+
+model StockTransfer {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transferNumber  String         @unique @map("transfer_number") @db.VarChar(30)
+  fromWarehouseId String         @map("from_warehouse_id") @db.Uuid
+  toWarehouseId   String         @map("to_warehouse_id") @db.Uuid
+  status          DocumentStatus @default(DRAFT)
+  transferDate    DateTime       @map("transfer_date") @db.Date
+  notes           String?        @db.VarChar(500)
+  createdBy       String         @map("created_by") @db.Uuid
+  confirmedBy     String?        @map("confirmed_by") @db.Uuid
+  confirmedAt     DateTime?      @map("confirmed_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  fromWarehouse Warehouse          @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouse   Warehouse          @relation("TransferTo", fields: [toWarehouseId], references: [id])
+  creator       User               @relation(fields: [createdBy], references: [id])
+  confirmer     User?              @relation("TransferConfirmedBy", fields: [confirmedBy], references: [id])
+  lines         StockTransferLine[]
+
+  @@map("stock_transfers")
+}
+
+model StockTransferLine {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transferId     String  @map("transfer_id") @db.Uuid
+  productId      String  @map("product_id") @db.Uuid
+  fromLocationId String? @map("from_location_id") @db.Uuid
+  toLocationId   String? @map("to_location_id") @db.Uuid
+  quantity       Decimal @db.Decimal(15, 4)
+  note           String? @db.VarChar(500)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+
+  @@map("stock_transfer_lines")
+}
+
+model StockTakingSession {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  warehouseId String            @map("warehouse_id") @db.Uuid
+  status      StockTakingStatus @default(IN_PROGRESS)
+  startedAt   DateTime          @default(now()) @map("started_at")
+  completedAt DateTime?         @map("completed_at")
+  notes       String?           @db.VarChar(500)
+  createdBy   String            @map("created_by") @db.Uuid
+
+  warehouse Warehouse         @relation(fields: [warehouseId], references: [id])
+  creator   User              @relation(fields: [createdBy], references: [id])
+  lines     StockTakingLine[]
+
+  @@map("stock_taking_sessions")
+}
+
+model StockTakingLine {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId  String  @map("session_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  locationId String? @map("location_id") @db.Uuid
+  systemQty  Decimal @map("system_qty") @db.Decimal(15, 4)
+  actualQty  Decimal @default(0) @map("actual_qty") @db.Decimal(15, 4)
+  difference Decimal @default(0) @db.Decimal(15, 4)
+  note       String? @db.VarChar(500)
+  isAdjusted Boolean @default(false) @map("is_adjusted")
+
+  session  StockTakingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  product  Product            @relation(fields: [productId], references: [id])
+  location StockLocation?     @relation(fields: [locationId], references: [id])
+
+  @@map("stock_taking_lines")
+}
+
+// ============================================================
+// PURCHASES
+// ============================================================
+
+model Supplier {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code            String   @unique @db.VarChar(20)
+  name            String   @db.VarChar(200)
+  contactPerson   String?  @map("contact_person") @db.VarChar(200)
+  phone           String?  @db.VarChar(20)
+  email           String?  @db.VarChar(200)
+  address         String?  @db.VarChar(500)
+  taxCode         String?  @map("tax_code") @db.VarChar(20)
+  paymentTermDays Int      @default(30) @map("payment_term_days")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  purchaseOrders    PurchaseOrder[]
+  goodsReceiptNotes GoodsReceiptNote[]
+  accountsPayable   AccountsPayable[]
+
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  poNumber     String   @unique @map("po_number") @db.VarChar(30)
+  supplierId   String   @map("supplier_id") @db.Uuid
+  status       POStatus @default(DRAFT)
+  orderDate    DateTime @map("order_date") @db.Date
+  expectedDate DateTime? @map("expected_date") @db.Date
+  notes        String?  @db.VarChar(500)
+  subtotal     Decimal  @default(0) @db.Decimal(18, 2)
+  taxAmount    Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grandTotal   Decimal  @default(0) @map("grand_total") @db.Decimal(18, 2)
+  createdBy    String   @map("created_by") @db.Uuid
+  approvedBy   String?  @map("approved_by") @db.Uuid
+  approvedAt   DateTime? @map("approved_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  creator  User                @relation("POCreatedBy", fields: [createdBy], references: [id])
+  approver User?               @relation("POApprovedBy", fields: [approvedBy], references: [id])
+  lines    PurchaseOrderLine[]
+  grnList  GoodsReceiptNote[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  poId        String  @map("po_id") @db.Uuid
+  productId   String  @map("product_id") @db.Uuid
+  uomId       String  @map("uom_id") @db.Uuid
+  quantity    Decimal @db.Decimal(15, 4)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(18, 4)
+  taxRate     Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  subtotal    Decimal @default(0) @db.Decimal(18, 2)
+  receivedQty Decimal @default(0) @map("received_qty") @db.Decimal(15, 4)
+
+  po       PurchaseOrder      @relation(fields: [poId], references: [id], onDelete: Cascade)
+  product  Product            @relation(fields: [productId], references: [id])
+  uom      UnitOfMeasure      @relation(fields: [uomId], references: [id])
+  grnLines GoodsReceiptLine[]
+
+  @@map("purchase_order_lines")
+}
+
+model GoodsReceiptNote {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  grnNumber   String         @unique @map("grn_number") @db.VarChar(30)
+  poId        String?        @map("po_id") @db.Uuid
+  supplierId  String         @map("supplier_id") @db.Uuid
+  warehouseId String         @map("warehouse_id") @db.Uuid
+  status      DocumentStatus @default(DRAFT)
+  receiptDate DateTime       @map("receipt_date") @db.Date
+  notes       String?        @db.VarChar(500)
+  subtotal    Decimal        @default(0) @db.Decimal(18, 2)
+  taxAmount   Decimal        @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grandTotal  Decimal        @default(0) @map("grand_total") @db.Decimal(18, 2)
+  createdBy   String         @map("created_by") @db.Uuid
+  confirmedBy String?        @map("confirmed_by") @db.Uuid
+  confirmedAt DateTime?      @map("confirmed_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  po              PurchaseOrder?    @relation(fields: [poId], references: [id])
+  supplier        Supplier          @relation(fields: [supplierId], references: [id])
+  warehouse       Warehouse         @relation(fields: [warehouseId], references: [id])
+  creator         User              @relation(fields: [createdBy], references: [id])
+  confirmer       User?             @relation("GRNConfirmedBy", fields: [confirmedBy], references: [id])
+  lines           GoodsReceiptLine[]
+  accountsPayable AccountsPayable[]
+
+  @@map("goods_receipt_notes")
+}
+
+model GoodsReceiptLine {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  grnId       String  @map("grn_id") @db.Uuid
+  poLineId    String? @map("po_line_id") @db.Uuid
+  productId   String  @map("product_id") @db.Uuid
+  locationId  String? @map("location_id") @db.Uuid
+  uomId       String  @map("uom_id") @db.Uuid
+  qtyReceived Decimal @map("qty_received") @db.Decimal(15, 4)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(18, 4)
+  taxRate     Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  subtotal    Decimal @default(0) @db.Decimal(18, 2)
+  unitCost    Decimal @default(0) @map("unit_cost") @db.Decimal(18, 4)
+
+  grn      GoodsReceiptNote   @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  poLine   PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
+  product  Product            @relation(fields: [productId], references: [id])
+  location StockLocation?     @relation(fields: [locationId], references: [id])
+  uom      UnitOfMeasure      @relation(fields: [uomId], references: [id])
+
+  @@map("goods_receipt_lines")
+}
+
+model AccountsPayable {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  grnId           String        @map("grn_id") @db.Uuid
+  supplierId      String        @map("supplier_id") @db.Uuid
+  invoiceNumber   String?       @map("invoice_number") @db.VarChar(50)
+  amountTotal     Decimal       @map("amount_total") @db.Decimal(18, 2)
+  amountPaid      Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 2)
+  amountRemaining Decimal       @default(0) @map("amount_remaining") @db.Decimal(18, 2)
+  dueDate         DateTime      @map("due_date") @db.Date
+  status          PaymentStatus @default(PENDING)
+  paymentDate     DateTime?     @map("payment_date") @db.Date
+  notes           String?       @db.VarChar(500)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  grn      GoodsReceiptNote @relation(fields: [grnId], references: [id])
+  supplier Supplier         @relation(fields: [supplierId], references: [id])
+
+  @@index([supplierId, status])
+  @@map("accounts_payable")
+}
+
+// ============================================================
+// SALES
+// ============================================================
+
+model Customer {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code            String   @unique @db.VarChar(20)
+  name            String   @db.VarChar(200)
+  contactPerson   String?  @map("contact_person") @db.VarChar(200)
+  phone           String?  @db.VarChar(20)
+  email           String?  @db.VarChar(200)
+  address         String?  @db.VarChar(500)
+  taxCode         String?  @map("tax_code") @db.VarChar(20)
+  creditLimit     Decimal  @default(0) @map("credit_limit") @db.Decimal(18, 2)
+  paymentTermDays Int      @default(30) @map("payment_term_days")
+  customerGroup   String?  @map("customer_group") @db.VarChar(50)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  quotations         Quotation[]
+  salesOrders        SalesOrder[]
+  invoices           Invoice[]
+  accountsReceivable AccountsReceivable[]
+
+  @@map("customers")
+}
+
+model Quotation {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quotationNumber String          @unique @map("quotation_number") @db.VarChar(30)
+  customerId      String          @map("customer_id") @db.Uuid
+  status          QuotationStatus @default(DRAFT)
+  validUntil      DateTime?       @map("valid_until") @db.Date
+  notes           String?         @db.VarChar(500)
+  subtotal        Decimal         @default(0) @db.Decimal(18, 2)
+  taxAmount       Decimal         @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grandTotal      Decimal         @default(0) @map("grand_total") @db.Decimal(18, 2)
+  createdBy       String          @map("created_by") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  customer    Customer       @relation(fields: [customerId], references: [id])
+  creator     User           @relation(fields: [createdBy], references: [id])
+  lines       QuotationLine[]
+  salesOrders SalesOrder[]
+
+  @@map("quotations")
+}
+
+model QuotationLine {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quotationId String  @map("quotation_id") @db.Uuid
+  productId   String  @map("product_id") @db.Uuid
+  uomId       String  @map("uom_id") @db.Uuid
+  quantity    Decimal @db.Decimal(15, 4)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(18, 4)
+  taxRate     Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  discountPct Decimal @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  subtotal    Decimal @default(0) @db.Decimal(18, 2)
+
+  quotation Quotation     @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product       @relation(fields: [productId], references: [id])
+  uom       UnitOfMeasure @relation(fields: [uomId], references: [id])
+
+  @@map("quotation_lines")
+}
+
+model SalesOrder {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  soNumber     String   @unique @map("so_number") @db.VarChar(30)
+  customerId   String   @map("customer_id") @db.Uuid
+  quotationId  String?  @map("quotation_id") @db.Uuid
+  warehouseId  String   @map("warehouse_id") @db.Uuid
+  status       SOStatus @default(DRAFT)
+  orderDate    DateTime @map("order_date") @db.Date
+  expectedDate DateTime? @map("expected_date") @db.Date
+  notes        String?  @db.VarChar(500)
+  subtotal     Decimal  @default(0) @db.Decimal(18, 2)
+  taxAmount    Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grandTotal   Decimal  @default(0) @map("grand_total") @db.Decimal(18, 2)
+  createdBy    String   @map("created_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  customer  Customer        @relation(fields: [customerId], references: [id])
+  quotation Quotation?      @relation(fields: [quotationId], references: [id])
+  warehouse Warehouse       @relation(fields: [warehouseId], references: [id])
+  creator   User            @relation(fields: [createdBy], references: [id])
+  lines     SalesOrderLine[]
+  gdnList   GoodsDeliveryNote[]
+  invoices  Invoice[]
+
+  @@map("sales_orders")
+}
+
+model SalesOrderLine {
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  soId            String  @map("so_id") @db.Uuid
+  quotationLineId String? @map("quotation_line_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  uomId           String  @map("uom_id") @db.Uuid
+  quantity        Decimal @db.Decimal(15, 4)
+  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
+  taxRate         Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  discountPct     Decimal @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  subtotal        Decimal @default(0) @db.Decimal(18, 2)
+  deliveredQty    Decimal @default(0) @map("delivered_qty") @db.Decimal(15, 4)
+
+  so           SalesOrder        @relation(fields: [soId], references: [id], onDelete: Cascade)
+  product      Product           @relation(fields: [productId], references: [id])
+  uom          UnitOfMeasure     @relation(fields: [uomId], references: [id])
+  gdnLines     GoodsDeliveryLine[]
+  invoiceLines InvoiceLine[]
+
+  @@map("sales_order_lines")
+}
+
+model GoodsDeliveryNote {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gdnNumber    String         @unique @map("gdn_number") @db.VarChar(30)
+  soId         String         @map("so_id") @db.Uuid
+  warehouseId  String         @map("warehouse_id") @db.Uuid
+  status       DocumentStatus @default(DRAFT)
+  deliveryDate DateTime       @map("delivery_date") @db.Date
+  notes        String?        @db.VarChar(500)
+  createdBy    String         @map("created_by") @db.Uuid
+  confirmedBy  String?        @map("confirmed_by") @db.Uuid
+  confirmedAt  DateTime?      @map("confirmed_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  so        SalesOrder          @relation(fields: [soId], references: [id])
+  warehouse Warehouse           @relation(fields: [warehouseId], references: [id])
+  creator   User                @relation(fields: [createdBy], references: [id])
+  confirmer User?               @relation("GDNConfirmedBy", fields: [confirmedBy], references: [id])
+  lines     GoodsDeliveryLine[]
+
+  @@map("goods_delivery_notes")
+}
+
+model GoodsDeliveryLine {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gdnId        String  @map("gdn_id") @db.Uuid
+  soLineId     String  @map("so_line_id") @db.Uuid
+  productId    String  @map("product_id") @db.Uuid
+  locationId   String? @map("location_id") @db.Uuid
+  uomId        String  @map("uom_id") @db.Uuid
+  qtyDelivered Decimal @map("qty_delivered") @db.Decimal(15, 4)
+  unitCost     Decimal @default(0) @map("unit_cost") @db.Decimal(18, 4)
+
+  gdn      GoodsDeliveryNote @relation(fields: [gdnId], references: [id], onDelete: Cascade)
+  soLine   SalesOrderLine    @relation(fields: [soLineId], references: [id])
+  product  Product           @relation(fields: [productId], references: [id])
+  location StockLocation?    @relation(fields: [locationId], references: [id])
+  uom      UnitOfMeasure     @relation(fields: [uomId], references: [id])
+
+  @@map("goods_delivery_lines")
+}
+
+model Invoice {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceNumber String        @unique @map("invoice_number") @db.VarChar(30)
+  soId          String?       @map("so_id") @db.Uuid
+  customerId    String        @map("customer_id") @db.Uuid
+  status        InvoiceStatus @default(DRAFT)
+  invoiceDate   DateTime      @map("invoice_date") @db.Date
+  dueDate       DateTime      @map("due_date") @db.Date
+  notes         String?       @db.VarChar(500)
+  subtotal      Decimal       @default(0) @db.Decimal(18, 2)
+  taxAmount     Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grandTotal    Decimal       @default(0) @map("grand_total") @db.Decimal(18, 2)
+  createdBy     String        @map("created_by") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  so                 SalesOrder?        @relation(fields: [soId], references: [id])
+  customer           Customer           @relation(fields: [customerId], references: [id])
+  creator            User               @relation(fields: [createdBy], references: [id])
+  lines              InvoiceLine[]
+  accountsReceivable AccountsReceivable[]
+
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId   String  @map("invoice_id") @db.Uuid
+  soLineId    String? @map("so_line_id") @db.Uuid
+  productId   String  @map("product_id") @db.Uuid
+  uomId       String  @map("uom_id") @db.Uuid
+  quantity    Decimal @db.Decimal(15, 4)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(18, 4)
+  taxRate     Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  discountPct Decimal @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  subtotal    Decimal @default(0) @db.Decimal(18, 2)
+
+  invoice Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  soLine  SalesOrderLine? @relation(fields: [soLineId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+  uom     UnitOfMeasure  @relation(fields: [uomId], references: [id])
+
+  @@map("invoice_lines")
+}
+
+model AccountsReceivable {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId       String        @map("invoice_id") @db.Uuid
+  customerId      String        @map("customer_id") @db.Uuid
+  amountTotal     Decimal       @map("amount_total") @db.Decimal(18, 2)
+  amountPaid      Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 2)
+  amountRemaining Decimal       @default(0) @map("amount_remaining") @db.Decimal(18, 2)
+  dueDate         DateTime      @map("due_date") @db.Date
+  status          PaymentStatus @default(PENDING)
+  paymentDate     DateTime?     @map("payment_date") @db.Date
+  notes           String?       @db.VarChar(500)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId, status])
+  @@map("accounts_receivable")
+}
