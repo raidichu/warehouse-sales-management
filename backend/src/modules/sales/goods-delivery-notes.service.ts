@@ -5,6 +5,7 @@ import { Type } from 'class-transformer';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PaginationDto, paginate, paginateMeta } from '../../common/dto/pagination.dto';
+import { KafkaProducerService } from '../kafka/kafka.producer.service';
 
 class GDNLineDto {
   @IsUUID() soLineId: string;
@@ -28,6 +29,7 @@ export class GoodsDeliveryNotesService {
   constructor(
     private prisma: PrismaService,
     private inventoryService: InventoryService,
+    private kafka: KafkaProducerService,
   ) {}
 
   async findAll(query: PaginationDto & { soId?: string; status?: string }) {
@@ -101,7 +103,7 @@ export class GoodsDeliveryNotesService {
     const gdn = await this.findOne(id);
     if (gdn.status !== DocumentStatus.DRAFT) throw new BadRequestException('Phiếu không ở trạng thái DRAFT');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       for (const line of gdn.lines) {
         await this.inventoryService.upsertInventory(tx, {
           productId: line.productId,
@@ -161,5 +163,21 @@ export class GoodsDeliveryNotesService {
         data: { status: DocumentStatus.CONFIRMED, confirmedBy: userId, confirmedAt: new Date() },
       });
     });
+
+    this.kafka.emitGdnConfirmed({
+      gdnId: gdn.id,
+      gdnNumber: gdn.gdnNumber,
+      soId: gdn.soId,
+      warehouseId: gdn.warehouseId,
+      lines: gdn.lines.map((l) => ({
+        productId: l.productId,
+        locationId: l.locationId,
+        qtyDelivered: Number(l.qtyDelivered),
+        unitCost: Number(l.unitCost),
+      })),
+      traceUserId: userId,
+    });
+
+    return result;
   }
 }

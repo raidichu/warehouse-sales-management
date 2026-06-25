@@ -4,6 +4,7 @@ import { IsArray, IsDateString, IsNumber, IsOptional, IsString, IsUUID, Min, Val
 import { Type } from 'class-transformer';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate, paginateMeta } from '../../common/dto/pagination.dto';
+import { KafkaProducerService } from '../kafka/kafka.producer.service';
 
 class InvoiceLineDto {
   @IsOptional() @IsUUID() soLineId?: string;
@@ -25,7 +26,10 @@ export class CreateInvoiceDto {
 
 @Injectable()
 export class InvoicesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private kafka: KafkaProducerService,
+  ) {}
 
   async findAll(query: PaginationDto & { customerId?: string; status?: string }) {
     const { take, skip } = paginate(query.page, query.limit);
@@ -116,7 +120,7 @@ export class InvoicesService {
     const inv = await this.findOne(id);
     if (inv.status !== InvoiceStatus.DRAFT) throw new BadRequestException('Hóa đơn không ở trạng thái DRAFT');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.accountsReceivable.create({
         data: {
           invoiceId: inv.id,
@@ -134,6 +138,18 @@ export class InvoicesService {
         data: { status: InvoiceStatus.CONFIRMED },
       });
     });
+
+    this.kafka.emitInvoiceConfirmed({
+      invoiceId: inv.id,
+      invoiceNumber: inv.invoiceNumber,
+      soId: inv.soId,
+      customerId: inv.customerId,
+      grandTotal: Number(inv.grandTotal),
+      dueDate: inv.dueDate.toISOString(),
+      traceUserId: userId,
+    });
+
+    return result;
   }
 
   async cancel(id: string) {

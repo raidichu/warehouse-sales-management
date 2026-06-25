@@ -18,6 +18,62 @@ services:
       timeout: 5s
       retries: 5
 
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: wsms_kafka
+    ports:
+      - '9092:9092'
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qg'
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    healthcheck:
+      test: ['CMD-SHELL', 'kafka-topics --bootstrap-server localhost:9092 --list']
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic grn.confirmed       --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic so.confirmed        --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic gdn.confirmed       --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic invoice.confirmed   --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic inventory.updated   --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic grn.confirmed.dlq   --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic so.confirmed.dlq    --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic gdn.confirmed.dlq   --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic invoice.confirmed.dlq --partitions 1 --replication-factor 1
+        echo 'All topics created.'
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: wsms_kafka_ui
+    ports:
+      - '8080:8080'
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: wsms-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
   backend:
     build:
       context: ./backend
@@ -26,15 +82,41 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://wsms:wsms_dev_pass@postgres:5432/wsms_dev
       NODE_ENV: development
       PORT: 3000
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_GROUP_ID: wsms-consumers
     ports:
       - '3000:3000'
     volumes:
       - ./backend:/app
       - /app/node_modules
 
+  backend-consumer:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://wsms:wsms_dev_pass@postgres:5432/wsms_dev
+      NODE_ENV: development
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_GROUP_ID: wsms-consumers
+    command: ['npm', 'run', 'start:consumer:dev']
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
 volumes:
   pgdata:
+  kafkadata:

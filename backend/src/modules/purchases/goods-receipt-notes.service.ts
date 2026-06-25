@@ -5,6 +5,7 @@ import { Type } from 'class-transformer';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PaginationDto, paginate, paginateMeta } from '../../common/dto/pagination.dto';
+import { KafkaProducerService } from '../kafka/kafka.producer.service';
 
 class GRNLineDto {
   @IsOptional() @IsUUID() poLineId?: string;
@@ -27,7 +28,11 @@ export class CreateGRNDto {
 
 @Injectable()
 export class GoodsReceiptNotesService {
-  constructor(private prisma: PrismaService, private inventoryService: InventoryService) {}
+  constructor(
+    private prisma: PrismaService,
+    private inventoryService: InventoryService,
+    private kafka: KafkaProducerService,
+  ) {}
 
   async findAll(query: PaginationDto & { supplierId?: string; status?: string }) {
     const { take, skip } = paginate(query.page, query.limit);
@@ -124,7 +129,7 @@ export class GoodsReceiptNotesService {
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + daysToAdd);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Update inventory for each line
       for (const line of grn.lines) {
         await this.inventoryService.upsertInventory(tx, {
@@ -186,10 +191,28 @@ export class GoodsReceiptNotesService {
         },
       });
 
-      return tx.goodsReceiptNote.update({
+      const confirmed = await tx.goodsReceiptNote.update({
         where: { id },
         data: { status: DocumentStatus.CONFIRMED, confirmedBy: userId, confirmedAt: new Date() },
       });
+      return confirmed;
     });
+
+    this.kafka.emitGrnConfirmed({
+      grnId: grn.id,
+      grnNumber: grn.grnNumber,
+      supplierId: grn.supplierId,
+      warehouseId: grn.warehouseId,
+      grandTotal: Number(grn.grandTotal),
+      lines: grn.lines.map((l) => ({
+        productId: l.productId,
+        locationId: l.locationId,
+        qtyReceived: Number(l.qtyReceived),
+        unitCost: Number(l.unitCost),
+      })),
+      traceUserId: userId,
+    });
+
+    return result;
   }
 }

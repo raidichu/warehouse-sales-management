@@ -5,6 +5,7 @@ import { Type } from 'class-transformer';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PaginationDto, paginate, paginateMeta } from '../../common/dto/pagination.dto';
+import { KafkaProducerService } from '../kafka/kafka.producer.service';
 
 class SOLineDto {
   @IsUUID() productId: string;
@@ -30,6 +31,7 @@ export class SalesOrdersService {
   constructor(
     private prisma: PrismaService,
     private inventoryService: InventoryService,
+    private kafka: KafkaProducerService,
   ) {}
 
   async findAll(query: PaginationDto & { customerId?: string; status?: string }) {
@@ -121,7 +123,7 @@ export class SalesOrdersService {
     const so = await this.findOne(id);
     if (so.status !== SOStatus.DRAFT) throw new BadRequestException('Đơn hàng không ở trạng thái DRAFT');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       for (const line of so.lines) {
         await this.inventoryService.reserveInventory(
           tx,
@@ -135,6 +137,21 @@ export class SalesOrdersService {
         data: { status: SOStatus.CONFIRMED },
       });
     });
+
+    this.kafka.emitSoConfirmed({
+      soId: so.id,
+      soNumber: so.soNumber,
+      customerId: so.customerId,
+      warehouseId: so.warehouseId,
+      grandTotal: Number(so.grandTotal),
+      lines: so.lines.map((l) => ({
+        productId: l.productId,
+        quantity: Number(l.quantity),
+      })),
+      traceUserId: userId,
+    });
+
+    return result;
   }
 
   async cancel(id: string, userId: string) {

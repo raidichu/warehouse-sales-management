@@ -4,8 +4,11 @@
   "description": "Warehouse & Sales Management System — NestJS API",
   "scripts": {
     "build": "nest build",
+    "build:consumer": "nest build consumer",
     "start": "node dist/main",
     "start:dev": "nest start --watch",
+    "start:consumer": "node dist/consumer.main",
+    "start:consumer:dev": "nest start consumer --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,test}/**/*.ts\"",
@@ -41,7 +44,9 @@
     "pino-pretty": "^11.0.0",
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "@nestjs/microservices": "^10.3.0",
+    "kafkajs": "^2.2.4"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.3.0",

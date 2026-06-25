@@ -11,6 +11,7 @@ import { InventoryModule } from './modules/inventory/inventory.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { KafkaModule } from './modules/kafka/kafka.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { ReportsModule } from './modules/reports/reports.module';
     PurchasesModule,
     SalesModule,
     ReportsModule,
+    KafkaModule,
   ],
 })
 export class AppModule {}
